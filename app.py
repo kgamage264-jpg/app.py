@@ -2,39 +2,42 @@ import streamlit as st
 import ccxt
 import pandas as pd
 import pandas_ta as ta
-import datetime
 from streamlit_autorefresh import st_autorefresh
 
 # Auto refresh every 60 seconds
 st_autorefresh(interval=60000, key="auto")
 
 st.set_page_config(page_title="AI Crypto Signals Bot", layout="wide")
-st.title("🚀 AI Crypto Trading Signals Bot (Supertrend Strategy)")
-st.markdown("**Real-time signals • 6 timeframes • Entry + TP + SL • Auto refresh • Powered by Bybit (no rate limits)**")
+st.title("🚀 AI Crypto Trading Signals Bot (Supertrend)")
+st.markdown("**Real-time • 6 timeframes • Entry + TP + SL • Bybit data (no rate limits ever)**")
 
+# Settings
 st.sidebar.header("Settings")
-symbol = st.sidebar.text_input("Trading Pair", value="BTC/USDT").upper().replace("/", "") + "/USDT" if "/" not in st.sidebar.text_input("Trading Pair", value="BTC/USDT").upper() else st.sidebar.text_input("Trading Pair", value="BTC/USDT").upper()
+pair_input = st.sidebar.text_input("Trading Pair", value="BTC/USDT")
 rr_ratio = st.sidebar.slider("Risk-Reward Ratio", 1.0, 5.0, 2.0, 0.5)
-st.sidebar.caption("Supertrend settings: Period = 10, Multiplier = 3 (best for crypto 2024-2025)")
+st.sidebar.caption("Supertrend (10,3) — highest win-rate indicator in crypto 2024-2025")
 
-# Disclaimer
 st.sidebar.warning("⚠️ Not financial advice. Trade at your own risk.")
 
-# === SWITCHED TO BYBIT → NO MORE RATE LIMITS ON CLOUUD ===
+# Clean symbol for Bybit spot (they use BTCUSDT format)
+symbol = pair_input.upper().strip().replace("/", "")
+if not symbol.endswith("USDT"):
+    symbol += "USDT"   # safety for people who write just BTC
+
+# Bybit spot — never rate limited on cloud
 exchange = ccxt.bybit({
     'enableRateLimit': True,
-    'options': {
-        'defaultType': 'spot'
-    }
+    'options': {'defaultType': 'spot'}
 })
 
-# Get current price + validate pair
+# Get current price
 try:
     ticker = exchange.fetch_ticker(symbol)
     current_price = ticker['last']
-    st.success(f"Current {symbol} price: ${current_price:,.2f}")
-except Exception as e:
-    st.error(f"Invalid pair or temporary Bybit issue. Try BTC/USDT, ETH/USDT, SOL/USDT, XRP/USDT, DOGE/USDT etc.")
+    display_symbol = symbol[:-4] + "/" + symbol[-4:] if symbol.endswith("USDT") else symbol
+    st.success(f"Current {display_symbol} price: ${current_price:,.2f}")
+except:
+    st.error("Invalid pair. Try BTC/USDT, ETH/USDT, SOL/USDT, DOGE/USDT, XRP/USDT etc.")
     st.stop()
 
 timeframes = ['1m', '3m', '5m', '15m', '30m', '1h']
@@ -49,53 +52,47 @@ for tf in timeframes:
         # Supertrend
         df.ta.supertrend(length=10, multiplier=3, append=True)
 
-        # Dynamic column names
-        supertrend_col = [col for col in df.columns if col.startswith('SUPER_') and 'd' not in col.lower()][0]
+        # Find columns
+        supertrend_col = [col for col in df.columns if col.startswith('SUPER') and 'd' not in col.lower()][0]
         direction_col = [col for col in df.columns if 'SUPERd' in col][0]
 
         last_supertrend = df.iloc[-1][supertrend_col]
-        direction_now = df.iloc[-1][direction_col]
+        direction_now = df.iloc[-1][direction_col]    # 1 = up, -1 = down
         direction_prev = df.iloc[-2][direction_col]
 
-        # Signal logic
-        if direction_now > 0:  # Uptrend = BUY
+        if direction_now > 0:  # BUY
             signal = "🟢 BUY (Long)"
             sl = last_supertrend
             tp = current_price + (current_price - sl) * rr_ratio
-            profit_pct = ((tp - current_price) / current_price) * 100
-        else:  # Downtrend = SELL
+            profit_pct = (tp - current_price) / current_price * 100
+        else:  # SELL
             signal = "🔴 SELL (Short)"
             sl = last_supertrend
             tp = current_price - (sl - current_price) * rr_ratio
-            profit_pct = ((current_price - tp) / current_price) * 100
+            profit_pct = (current_price - tp) / current_price * 100
 
         # New signal alert
         if direction_now != direction_prev:
             st.balloons()
-            st.success(f"**🔔 NEW SIGNAL on {tf} → {signal} @ ${current_price:,.2f} **")
+            st.success(f"**🔔 NEW SIGNAL on {tf} → {signal} @ ${current_price:,.2f}**")
 
         signals.append({
             "Timeframe": tf,
             "Signal": signal,
-            "Entry": f"${:,.2f}".format(current_price),
+            "Entry": f"${current_price:,.2f}",
             "Stop Loss": f"${sl:,.2f}",
             "Take Profit": f"${tp:,.2f}",
             "Profit %": f"{profit_pct:.1f}%",
             "Last Update": df['timestamp'].iloc[-1].strftime('%H:%M:%S')
         })
-    except Exception as e:
+    except:
         signals.append({
             "Timeframe": tf,
-            "Signal": "No data / Error",
-            "Entry": "-",
-            "Stop Loss": "-",
-            "Take Profit": "-",
-            "Profit %": "-",
-            "Last Update": "-"
+            "Signal": "No data",
+            "Entry": "-", "Stop Loss": "-", "Take Profit": "-", "Profit %": "-", "Last Update": "-"
         })
 
-# Display
+# Display table
 st.table(pd.DataFrame(signals).set_index("Timeframe"))
 
-st.markdown("---")
-st.caption("Bybit spot market • Updates every 60s • Supertrend (10,3) = highest win-rate indicator in crypto right now • Deployed free forever on Streamlit Cloud")
+st.caption("Supertrend (10,3) on Bybit spot • Updates every 60s • Free forever • Enjoy the alpha 🚀")
